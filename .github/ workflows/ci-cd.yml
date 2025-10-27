@@ -1,0 +1,74 @@
+# .github/workflows/ci-cd.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  IMAGE_NAME: demo-cicd-app
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (for cross-platform build)
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to AWS ECR
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          region: ${{ secrets.AWS_REGION }}
+
+      - name: Get AWS account ID
+        run: echo "AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}" >> $GITHUB_ENV
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE_URI=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.IMAGE_NAME }}:$(echo $GITHUB_SHA | cut -c1-7)
+          docker build -t $IMAGE_URI -f app/Dockerfile .
+          docker push $IMAGE_URI
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+
+      - name: Update ECS service to use new image
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          IMAGE_URI=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.IMAGE_NAME }}:$(echo $GITHUB_SHA | cut -c1-7)
+          echo "Updating task definition with image $IMAGE_URI"
+
+          # Fetch current task def family ARN
+          TASK_FAMILY=$(aws ecs list-task-definitions --region $AWS_REGION --query 'taskDefinitionArns[?contains(@, `demo-cicd-task`)]' --output text || true)
+          # Register new task def by replacing image in the current task definition JSON
+          TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition demo-cicd-task --region $AWS_REGION --query 'taskDefinition.taskDefinitionArn' --output text || true)
+
+          # Get latest task definition JSON, strip fields not allowed when registering
+          aws ecs describe-task-definition --task-definition demo-cicd-task --region $AWS_REGION > taskdef.json
+
+          # Prepare container definitions with new image
+          jq --arg IMAGE "$IMAGE_URI" '.taskDefinition.containerDefinitions[0].image=$IMAGE |
+              {family: .taskDefinition.family,
+               networkMode: .taskDefinition.networkMode,
+               containerDefinitions: .taskDefinition.containerDefinitions,
+               requiresCompatibilities: .taskDefinition.requiresCompatibilities,
+               cpu: .taskDefinition.cpu,
+               memory: .taskDefinition.memory,
+               executionRoleArn: .taskDefinition.executionRoleArn
+              }' taskdef.json > newtaskdef.json
+
+          aws ecs register-task-definition --region $AWS_REGION --cli-input-json file://newtaskdef.json
+
+          # Update service to use new task definition
+          aws ecs update-service --cluster demo-cicd-cluster --service demo-cicd-service --region $AWS_REGION --force-new-deployment
+
