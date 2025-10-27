@@ -56,7 +56,7 @@ git commit -m "Initial commit — CI/CD sample app + Terraform infra"
 gh repo create skalamgir/scalable-cicd-platform --public --source=. --remote=origin
 git push -u origin main
 
-6 **Required GitHub secrets (Repository → Settings → Secrets & variables → Actions)**
+6. **Required GitHub secrets (Repository → Settings → Secrets & variables → Actions)**
 
 AWS_REGION — e.g., us-east-1
 
@@ -66,7 +66,7 @@ AWS_ACCESS_KEY_ID — an IAM user key with permissions to manage ECR, ECS, ALB, 
 
 AWS_SECRET_ACCESS_KEY
 
-7 **Terraform deploy hints & next steps**
+7. **Terraform deploy hints & next steps**
 **terraform init → terraform plan → terraform apply -var="aws_region=us-east-1" -var="project=demo-cicd"**
 
 After apply, Terraform outputs will show ecr_repo_url and alb_dns. You can access the service via the ALB DNS.
@@ -75,7 +75,7 @@ After initial apply, push code to GitHub main and GitHub Actions will build and 
 
 If you want the workflow to create the ECR repository if missing, add a step to create it with aws ecr create-repository (or rely on Terraform to create it).
 
-8 **Security & production notes (important)**
+8. **Security & production notes (important)**
 
 Use private subnets for ECS tasks (public subnets used here for simplicity).
 
